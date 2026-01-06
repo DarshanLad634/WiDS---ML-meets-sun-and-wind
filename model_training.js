@@ -19,9 +19,10 @@ var neg_samples = neg_mask.selfMask().stratifiedSample({numPoints: pos_samples.s
 
 // Classifier Training
 var train_set = dataStack.sampleRegions({collection: pos_samples.merge(neg_samples), properties: ['target'], scale: 100, tileScale: 16});
-var cart_model = ee.Classifier.smileCart().train({features: train_set, classProperty: 'target', inputProperties: dataStack.bandNames()});
+var classifier = ee.Classifier.smileRandomForest(100).train(train_set, 'target', dataStack.bandNames());
 
 // Final classification and output
-var result = dataStack.classify(cart_model);
+var result = dataStack.classify(classifier);
 Map.addLayer(result, {min: 0, max: 1, palette: ['white', 'darkgreen']}, 'Suitability Map');
+
 Map.addLayer(solar_pts, {color: 'orange'}, 'Reference Solar Farms');
