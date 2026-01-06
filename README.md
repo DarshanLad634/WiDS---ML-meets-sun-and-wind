@@ -9,8 +9,8 @@ This repository contains the source code for a midterm project identifying solar
 * **Function:** Script to import, clean, and stack environmental layers including Solar Radiation (GHI), Cloud Cover, Surface Temperature (LST), Terrain Slope, and Land Use (LULC).
 
 ### 2) model_training.js
-**Purpose:** Machine Learning implementation.
-**Function:** Integrates actual solar farm locations from the WRI Database as training data. It uses a Random Forest classifier to analyze the feature stack and generate a final suitability map for the district.
+* **Purpose:** Machine Learning implementation.
+* **Function:** Integrates actual solar farm locations from the WRI Database as training data. It uses a Random Forest classifier to analyze the feature stack and generate a final suitability map for the district.
 
 
 
