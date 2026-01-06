@@ -5,8 +5,8 @@ This repository contains the source code for a midterm project identifying solar
 ## Repository Files
 
 ### 1) data_prep.js
-**Purpose:** Data preparation and preprocessing.
-**Function:** Script to import, clean, and stack environmental layers including Solar Radiation (GHI), Cloud Cover, Surface Temperature (LST), Terrain Slope, and Land Use (LULC).
+* **Purpose:** Data preparation and preprocessing.  
+* **Function:** Script to import, clean, and stack environmental layers including Solar Radiation (GHI), Cloud Cover, Surface Temperature (LST), Terrain Slope, and Land Use (LULC).
 
 ### 2) model_training.js
 **Purpose:** Machine Learning implementation.
