@@ -1,0 +1,221 @@
+/**********************************************************
+ * SECTION 1: STUDY AREA & DATA LAYERS
+ **********************************************************/
+
+var kutch = ee.FeatureCollection("FAO/GAUL/2015/level2")
+  .filter(ee.Filter.eq('ADM2_NAME', 'Kachchh'));
+
+Map.centerObject(kutch, 8);
+
+// ---------- Data Layers ----------
+
+// GHI
+var ghi = ee.ImageCollection("ECMWF/ERA5_LAND/DAILY_AGGR")
+  .filterDate('2023-01-01', '2024-01-01')
+  .select('surface_solar_radiation_downwards_sum')
+  .mean()
+  .divide(1e6)
+  .rename('GHI')
+  .clip(kutch);
+
+// Cloud Cover
+var cloud = ee.ImageCollection("ECMWF/ERA5/HOURLY")
+  .filterDate('2023-12-01', '2024-01-01')
+  .select('total_cloud_cover')
+  .mean()
+  .multiply(100)
+  .rename('CloudCover')
+  .clip(kutch);
+
+// Land Surface Temperature
+var lst = ee.ImageCollection("MODIS/061/MOD11A2")
+  .filterDate('2020-01-01', '2024-01-01')
+  .select('LST_Day_1km')
+  .mean()
+  .multiply(0.02)
+  .subtract(273.15)
+  .rename('LST')
+  .clip(kutch);
+
+// Slope
+var dem = ee.Image("USGS/SRTMGL1_003").clip(kutch);
+var slope = ee.Terrain.slope(dem).rename('Slope');
+
+// LULC
+var lulc = ee.Image("ESA/WorldCover/v100/2020")
+  .select('Map')
+  .rename('LULC')
+  .clip(kutch);
+
+// Feature Stack
+var featureStack = ghi
+  .addBands(cloud)
+  .addBands(lst)
+  .addBands(slope)
+  .addBands(lulc);
+
+/**********************************************************
+ * SECTION 2: TRAINING DATA PREPARATION
+ **********************************************************/
+
+// Real solar plants
+var realSolarFarms = ee.FeatureCollection("WRI/GPPD/power_plants")
+  .filter(ee.Filter.and(
+    ee.Filter.eq('fuel1', 'Solar'),
+    ee.Filter.bounds(kutch)
+  ));
+
+// Bad zones (non-solar)
+var badZonesMask = lulc.eq(80)     // Water
+  .or(lulc.eq(50))                 // Urban
+  .or(slope.gt(15));               // Steep slope
+
+// ---------------- POSITIVE SAMPLES ----------------
+
+// Buffer solar farms
+var solarBuffers = realSolarFarms.map(function(f) {
+  return f.buffer(1000).set('land_type', 1);
+});
+
+// Sample pixels inside buffers
+var goodSamples = featureStack.sampleRegions({
+  collection: solarBuffers,
+  properties: ['land_type'],
+  scale: 100,
+  tileScale: 16
+});
+
+// ---------------- NEGATIVE SAMPLES ----------------
+
+// Sample bad zones explicitly
+var badPoints = badZonesMask.selfMask().stratifiedSample({
+  numPoints: 800,       // FIXED large number
+  region: kutch,
+  scale: 100,
+  geometries: true
+}).map(function(f) {
+  return f.set('land_type', 0);
+});
+
+var badSamples = featureStack.sampleRegions({
+  collection: badPoints,
+  properties: ['land_type'],
+  scale: 100,
+  tileScale: 16
+});
+
+// ---------------- COMBINE ----------------
+
+var trainingData = goodSamples.merge(badSamples);
+
+/**********************************************************
+ * SECTION 3: TRAIN / VALIDATION / TEST SPLIT
+ **********************************************************/
+
+var withRandom = trainingData.randomColumn('random', 42);
+
+var trainSet = withRandom.filter(ee.Filter.lt('random', 0.7));
+var valSet = withRandom.filter(
+  ee.Filter.and(
+    ee.Filter.gte('random', 0.7),
+    ee.Filter.lt('random', 0.85)
+  )
+);
+var testSet = withRandom.filter(ee.Filter.gte('random', 0.85));
+
+print('Train samples:', trainSet.size());
+print('Validation samples:', valSet.size());
+print('Test samples:', testSet.size());
+
+print('Train distribution', trainSet.aggregate_histogram('land_type'));
+print('Validation distribution', valSet.aggregate_histogram('land_type'));
+print('Test distribution', testSet.aggregate_histogram('land_type'));
+
+/**********************************************************
+ * SECTION 4: MULTIPLE MODEL TRAINING
+ **********************************************************/
+
+// CART
+var cart = ee.Classifier.smileCart().train({
+  features: trainSet,
+  classProperty: 'land_type',
+  inputProperties: featureStack.bandNames()
+});
+
+// Random Forest
+var rf = ee.Classifier.smileRandomForest({
+  numberOfTrees: 100,
+  minLeafPopulation: 5,
+  seed: 42
+}).train({
+  features: trainSet,
+  classProperty: 'land_type',
+  inputProperties: featureStack.bandNames()
+});
+
+// SVM
+var svm = ee.Classifier.libsvm({
+  kernelType: 'RBF',
+  gamma: 0.5,
+  cost: 10
+}).train({
+  features: trainSet,
+  classProperty: 'land_type',
+  inputProperties: featureStack.bandNames()
+});
+
+/**********************************************************
+ * SECTION 5: MODEL VALIDATION
+ **********************************************************/
+
+function evaluateModel(classifier, dataset, name) {
+  var classified = dataset.classify(classifier);
+  var cm = classified.errorMatrix('land_type', 'classification');
+
+  print(name + ' Confusion Matrix', cm);
+  print(name + ' Accuracy', cm.accuracy());
+  print(name + ' Kappa', cm.kappa());
+}
+
+evaluateModel(cart, valSet, 'CART');
+evaluateModel(rf, valSet, 'Random Forest');
+evaluateModel(svm, valSet, 'SVM');
+
+/**********************************************************
+ * SECTION 6: FINAL MODEL SELECTION & TESTING
+ **********************************************************/
+
+// Best model (based on validation metrics)
+var bestModel = rf;
+
+// Final test
+var testClassified = testSet.classify(bestModel);
+var testCM = testClassified.errorMatrix('land_type', 'classification');
+
+print('FINAL TEST Confusion Matrix', testCM);
+print('FINAL TEST Accuracy', testCM.accuracy());
+print('FINAL TEST Kappa', testCM.kappa());
+
+// Feature importance
+print(
+  'Feature Importance',
+  ee.Dictionary(bestModel.explain().get('importance'))
+);
+
+/**********************************************************
+ * SECTION 7: FINAL SUITABILITY MAP
+ **********************************************************/
+
+var suitabilityMap = featureStack.classify(bestModel);
+
+Map.addLayer(
+  suitabilityMap,
+  {min: 0, max: 1, palette: ['white', 'green']},
+  'Best Model Solar Suitability'
+);
+
+Map.addLayer(
+  realSolarFarms,
+  {color: 'yellow'},
+  'Existing Solar Plants (WRI)'
+);
