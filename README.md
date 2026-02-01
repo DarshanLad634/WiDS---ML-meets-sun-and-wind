@@ -12,6 +12,9 @@ This repository contains the source code for a midterm project identifying solar
 * **Purpose:** Machine Learning implementation.
 * **Function:** Integrates actual solar farm locations from the WRI Database as training data. It uses a Random Forest classifier to analyze the feature stack and generate a final suitability map for the district.
 
+### 3) finalcode.js
+* **Purpose:** Trains and evaluates CART, Random Forest, and SVM classifiers in Google Earth Engine using geospatial features and real solar plant locations, and generates a final solar suitability map. 
+* **Function:** To compare supervised ML models and produce a reliable solar suitability classification.
 
 
 ## Methodology Overview
